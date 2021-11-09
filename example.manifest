@@ -1,0 +1,33 @@
+# Example manifest file for masspkg.
+# Comments (lines beginning with a hash) are ignored.
+
+# The package name. May only contain alphanumeric characters and dashes.
+pkgname="example-package"
+
+# The package version. It is recommended to keep the version formatting used by
+# the upstream package, unless you have a specific reason to change it.
+pkgver="1.0.0"
+
+# Short description of the package. Should ideally be less than 60 characters.
+description="Example program for demonstrating masspkg manifest syntax."
+
+# Package dependencies. Each dependency should be separated with a space. If
+# the package has no dependencies, leave it blank or omit the line entirely.
+# Dependencies which are already installed as part of the MassOS system will be
+# ignored by masspkg.
+deps="bash glibc"
+
+# CPU architecture (uname -m) which the package is compiled for. If the package
+# can run on any architecture, use 'any'.
+arch="x86_64"
+
+# The home page or project page of the upstream package.
+homepage="https://github.com/TheSonicMaster/MassOS"
+
+# Your full name and email address.
+maintainer="John Smith <john@example.org>"
+
+# The license which the software uses. Should use the SPDX indentifier. See
+# <https://spdx.org/licenses/> for more information. Use 'custom' if the
+# package is proprietary, or 'unknown' if the license is not known.
+license="GPL-3.0-or-later"

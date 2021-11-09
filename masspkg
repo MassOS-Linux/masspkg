@@ -1,0 +1,492 @@
+#!/bin/bash
+#
+# masspkg - The MassOS Package Manager.
+# Copyright (C) 2021 The Sonic Master.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Set version and copyright year.
+VER="1.0.0"
+CP_YEAR="2021"
+# Exit on error.
+set -e
+# Location of the configuration file.
+cfg="/etc/masspkg.conf"
+# Set invocation.
+invocation="$(basename $0)"
+# Ensure we are root.
+if [ $EUID -ne 0 ]; then
+  echo "Error: $invocation must be run as root." >&2
+  exit 1
+fi
+# Set architecture.
+sys_arch="$(uname -m)"
+# Die (exit on error) function.
+die() {
+  test -z "$@" || echo "$@" >&2
+  exit 1
+}
+mf_err() {
+  echo "Error: Manifest file is corrupted or has syntax errors." >&2
+  exit 1
+}
+# Check and source the configuration file.
+if [ ! -e "$cfg" ]; then
+  die "Error: Configuration file $cfg was not found."
+fi
+. /etc/masspkg.conf 2>/dev/null || true
+if [ -z "$repo" ]; then
+  die "Error: You must define a remote repository in $cfg."
+elif [ -z "$datadir" ]; then
+  die "Error: Must set a data directory (e.g. /var/lib/masspkg) in $cfg."
+fi
+# Create the data directory if it doesn't exist.
+if [ ! -d "$datadir" ]; then
+  if [ -e "$datadir" ]; then
+    die "Error: $datadir exists but is not a directory; cannot use it."
+  else
+    mkdir -p "$datadir"
+  fi
+fi
+# Setup the data directory structure if not present.
+mkdir -p "$datadir"/{cache,extracted,manifest}
+# If a backup file does not exist, try to create it.
+test -e "$cfg.orig" || (cp "$cfg" "$cfg.orig" 2>/dev/null || true)
+# Clean up any residue from previous runs.
+rm -rf "$datadir"/cache/*
+# Unset any potentially conflicting environment variables.
+unset friendly fdep not_in ok_packages pkg_deps the_list to_rm to_upd
+# Set arguments, ignoring the operation specifier.
+if [ ! -z "$2" ]; then
+  args="$(echo "$@" | cut -d' ' -f2- | xargs -n1 | sort -u | xargs)"
+else
+  unset args
+fi
+# Usage/help function.
+help() {
+  echo "masspkg - The MassOS Package Manager."
+  echo "Version $VER - Copyright (C) $CP_YEAR The Sonic Master."
+  echo
+  echo "$invocation install    - Install one or more package(s)."
+  echo "$invocation update     - Scan for and install package update(s)."
+  echo "$invocation remove     - Remove one or more package(s)."
+  echo "$invocation list       - List installed package(s)."
+  echo "$invocation info       - Get information about a particular package."
+  echo
+  echo "This is free software with NO WARRANTY. A copy of the license can be"
+  echo "obtained from <https://www.gnu.org/licenses/gpl-3.0.html>."
+}
+# Install function.
+operation_install() {
+  if [ -z "$args" ]; then
+    echo "Error: You must specify at least one package to install." >&2
+    echo >&2
+    echo "Usage: $invocation install <package-name>" >&2
+    exit 1
+  fi
+  # Check if packages are installed.
+  for pkg in $args; do
+    if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+      echo "$pkg is already installed as part of your system."
+    elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
+      . "$datadir/manifest/$pkg.manifest" 2>/dev/null || mf_err
+      if [ "$installed_as_dependency" = "True" ]; then
+        echo "$pkg is already installed as a dependency of another package."
+        echo "Marking $pkg as manually installed."
+        sed -e 's/as_dependency="True"/as_dependency="False"/' \
+        -i "$datadir/manifest/$pkg.manifest"
+      else
+        echo "$pkg is already installed."
+      fi
+    else
+      not_in="$not_in $pkg"
+    fi
+  done
+  if [ -z "$not_in" ]; then
+    exit 0
+  fi
+  # Try to fetch the package metadata.
+  for pkg in $not_in; do
+    curl --fail-with-body -Ls "$repo/$sys_arch/manifest/$pkg.manifest" \
+    -o "$datadir/cache/$pkg.manifest" 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; die "Error: Could not locate package $pkg.")
+    # Check architecture.
+    . "$datadir/cache/$pkg.manifest" 2>/dev/null || mf_err
+    if [ "$arch" != "$sys_arch" ] && [ "$arch" != "any" ]; then
+      rm -rf "$datadir"/cache/*
+      die "Error: $pkg does not support architecture $sys_arch."
+    fi
+    ok_packages="$ok_packages $pkg"
+  done
+  # Check dependencies (needs to be a function so we can use it recursively).
+  check_deps() {
+    unset deps
+    . "$datadir/cache/$1.manifest" 2>/dev/null || mf_err
+    if [ ! -z "$deps" ]; then
+      for dp in $deps; do
+        # Check if dependency is installed as part of the system.
+        if ! grep -Fqx "$dp" "$builtins" 2>/dev/null; then
+          if [ ! -e "$datadir/cache/$dp.manifest" ] && \
+          [ ! -e "$datadir/manifest/$dp.manifest" ]; then
+            curl --fail-with-body -Ls "$repo/$sys_arch/manifest/$dp.manifest" \
+            -o "$datadir/cache/$dp.manifest" 2>/dev/null ||
+            (rm -rf "$datadir"/cache/*;
+            die "Error: Could not satisfy dependency $dp of package $1.")
+            pkg_deps="$pkg_deps $dp"
+            check_deps "$dp"
+          fi
+        fi
+      done
+    fi
+  }
+  for pkg in $ok_packages; do
+    check_deps $pkg || die
+  done
+  # Display packages to be installed.
+  for i in $ok_packages; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    friendly="$friendly, $pkgname=$pkgver"
+  done
+  friendly="$(echo "$friendly" | sed 's/, //')"
+  if [ -z "$pkg_deps" ]; then
+    fdep="None"
+  else
+    for i in $pkg_deps; do
+      . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+      fdep="$fdep, $pkgname=$pkgver"
+    done
+    fdep="$(echo "$fdep" | sed 's/, //')"
+  fi
+  echo "Packages you've chosen install: $friendly"
+  echo "Dependencies needed by those packages: $fdep"
+  echo "Total packages to install: $(wc -w <<< "$friendly $pkg_deps")"
+  echo
+  read -p "Proceed with the installation? [Y/n] " proceed_inst
+  proceed_inst="${proceed_inst:0:1}"
+  proceed_inst=$(echo "$proceed_inst" | tr '[:upper:]' '[:lower:]')
+  if [ "$proceed_inst" = "n" ]; then
+    rm -rf "$datadir"/cache/*
+    exit 1
+  fi
+  # Download all packages; dependencies first.
+  for i in $pkg_deps $ok_packages; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Downloading $i=$pkgver..."
+    curl --fail-with-body -Ls \
+    "$repo/$sys_arch/archives/$i-$pkgver-$arch.tar.xz" -o \
+    "$datadir/cache/$i-$pkgver-$arch.tar.xz" 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; die "Error: Failed to download package $i.")
+  done
+  # Once everything has downloaded, extract them to the extraction directory.
+  for i in $pkg_deps $ok_packages; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Unpacking $i=$pkgver..."
+    test ! -e "$datadir/extracted/$i-$pkgver-$arch" ||
+    rm -rf "$datadir/extracted/$i-$pkgver-$arch"
+    mkdir -p "$datadir/extracted/$i-$pkgver-$arch"
+    tar -xpf "$datadir/cache/$i-$pkgver-$arch.tar.xz" -C \
+    "$datadir/extracted/$i-$pkgver-$arch" 2>/dev/null ||
+    (rm -rf "$datadir/extracted/$i-$pkgver-$arch"; rm -rf "$datadir"/cache/*;
+    die "Error: Could not unpack package $i.")
+  done
+  # Install the packages.
+  pushd "$datadir/extracted" >/dev/null
+  for i in $pkg_deps $ok_packages; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Installing $i=$pkgver..."
+    for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
+    do
+      install -D $(stat -c '-m %a -g %g -o %u' "$i-$pkgver-$arch/$j") \
+      "$i-$pkgver-$arch/$j" "$j" 2>/dev/null ||
+      (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
+      die "Error: Failed to install package $i.")
+    done
+  done
+  popd >/dev/null
+  # Move manifest files to $datadir/manifest.
+  for i in $pkg_deps; do
+    echo 'installed_as_dependency="True"' >> "$datadir/cache/$i.manifest"
+    mv "$datadir/cache/$i.manifest" "$datadir/manifest/$i.manifest"
+  done
+  for i in $ok_packages; do
+    echo 'installed_as_dependency="False"' >> "$datadir/cache/$i.manifest"
+    mv "$datadir/cache/$i.manifest" "$datadir/manifest/$i.manifest"
+  done
+  # Clean up anything left over.
+  rm -rf "$datadir"/cache/*
+  # Final message.
+  echo "The installation was successful."
+  exit 0
+}
+# Update function.
+operation_update() {
+  installed="$(ls -A "$datadir/manifest")"
+  if [ -z "$installed" ]; then
+    echo "You don't currently have any packages installed."
+    exit 0
+  fi
+  for i in $installed; do
+    curl --fail-with-body -Ls "$repo/$sys_arch/manifest/$i" -o \
+    "$datadir/cache/$i" || continue
+    # Compare package versions to determine whether an update is needed.
+    . "$datadir/manifest/$i" 2>/dev/null || mf_err
+    localver="$pkgver"
+    . "$datadir/cache/$i" 2>/dev/null || mf_err
+    remotever="$pkgver"
+    if [ "$localver" != "$remotever" ]; then
+      to_upd="$to_upd $pkgname"
+    fi
+  done
+  if [ -z "$to_upd" ]; then
+    echo "No updates are available."
+    rm -rf "$datadir"/cache/*
+    exit 0
+  fi
+  # Show information and a confirmation prompt.
+  echo "$(wc -w <<< "$to_upd") packages will be updated:"
+  echo
+  for i in $to_upd; do
+    . "$datadir/manifest/$i.manifest" 2>/dev/null || mf_err
+    localver="$pkgver"
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    remotever="$pkgver"
+    echo "$pkgname: $localver --> $remotever"
+  done
+  echo
+  read -p "Proceed with the update? [Y/n] " proceed_upd
+  proceed_upd="${proceed_upd:0:1}"
+  proceed_upd=$(echo "$proceed_upd" | tr '[:upper:]' '[:lower:]')
+  if [ "$proceed_upd" = "n" ]; then
+    rm -rf "$datadir"/cache/*
+    exit 1
+  fi
+  # Download all the packages.
+  for i in $to_upd; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Downloading $i=$pkgver..."
+    curl --fail-with-body -Ls \
+    "$repo/$sys_arch/archives/$i-$pkgver-$arch.tar.xz" -o \
+    "$datadir/cache/$i-$pkgver-$arch.tar.xz" 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; die "Error: Failed to download package $i.")
+  done
+  # Once everything has downloaded, extract them to the extraction directory.
+  for i in $to_upd; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Unpacking $i=$pkgver..."
+    rm -rf "$datadir/extracted/$i-$pkgver-$arch"
+    mkdir -p "$datadir/extracted/$i-$pkgver-$arch"
+    tar -xpf "$datadir/cache/$i-$pkgver-$arch.tar.xz" -C \
+    "$datadir/extracted/$i-$pkgver-$arch" 2>/dev/null ||
+    (rm -rf "$datadir/extracted/$i-$pkgver-$arch"; rm -rf "$datadir"/cache/*;
+    die "Error: Could not unpack package $i.")
+  done
+  # Install the updated packages.
+  pushd "$datadir/extracted" >/dev/null
+  for i in $to_upd; do
+    . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
+    echo "Updating $i=$pkgver..."
+    for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
+    do
+      install -D $(stat -c '-m %a -g %g -o %u' "$i-$pkgver-$arch/$j") \
+      "$i-$pkgver-$arch/$j" "$j" 2>/dev/null ||
+      (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
+      die "Error: Failed to update package $i.")
+    done
+  done
+  popd >/dev/null
+  # Clean up the old directories and move the new manifest files.
+  for i in $to_upd; do
+    . "$datadir/manifest/$i.manifest" 2>/dev/null || mf_err
+    if [ "$installed_as_dependency" = "True" ]; then
+      echo 'installed_as_dependency="True"' >> "$datadir/cache/$i.manifest"
+    else
+      echo 'installed_as_dependency="False"' >> "$datadir/cache/$i.manifest"
+    fi
+    mv "$datadir/cache/$i.manifest" "$datadir/manifest/$i.manifest"
+  done
+  # Clean up anything left over.
+  rm -rf "$datadir"/cache/*
+  # Final message.
+  echo "The update was successful."
+  exit 0
+}
+# Remove function.
+operation_remove() {
+  if [ -z "$args" ]; then
+    echo "Error: You must specify at least one package to remove." >&2
+    echo >&2
+    echo "Usage: $invocation remove <package-name>" >&2
+    exit 1
+  fi
+  # Check if packages are actually installed.
+  for pkg in $args; do
+    if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+      die "Error: $pkg is part of your system. Cannot remove it."
+    elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
+      to_rm="$to_rm $pkg"
+    else
+      echo "$pkg is not installed."
+    fi
+  done
+  if [ -z "$to_rm" ]; then
+    exit 0
+  fi
+  # Check if removing the package would break dependencies of other packages.
+  installed="$(ls -A "$datadir/manifest" | sed "/$to_rm.manifest/d")"
+  for i in $installed; do
+    . "$datadir/manifest/$i" 2>/dev/null || mf_err
+    for j in $to_rm; do
+      if echo "$deps" | grep -Fqw "$j"; then
+        die "Error: $pkg is a dependency of $pkgname. Cannot remove it."
+      fi
+    done
+  done
+  # Display packages to be removed.
+  for i in $to_rm; do
+    . "$datadir/manifest/$i.manifest" 2>/dev/null || mf_err
+    friendly="$friendly, $pkgname=$pkgver"
+  done
+  friendly="$(echo "$friendly" | sed 's/, //')"
+  echo "Packages you've chosen remove: $friendly"
+  echo "Total packages to remove: $(wc -w <<< "$friendly")"
+  echo
+  read -p "Proceed with the removal? [Y/n] " proceed_rm
+  proceed_rm="${proceed_rm:0:1}"
+  proceed_rm=$(echo "$proceed_rm" | tr '[:upper:]' '[:lower:]')
+  if [ "$proceed_rm" = "n" ]; then
+    rm -rf "$datadir"/cache/*
+    exit 1
+  fi
+  # Remove each package.
+  pushd "$datadir/extracted" >/dev/null
+  for i in $to_rm; do
+    . "$datadir/manifest/$i.manifest" 2>/dev/null || mf_err
+    echo "Removing $i=$pkgver..."
+    for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
+    do
+      rm -f "$j" 2>/dev/null || die "Error: Failed to remove package $i."
+    done
+    # Remove the installed manifest file.
+    rm -f "$datadir/manifest/$i.manifest"
+    # Finally, remove the extracted data directory.
+    rm -rf "$i-$pkgver-$arch"
+  done
+  popd >/dev/null
+  # Clean up anything left over.
+  rm -rf "$datadir"/cache/*
+  # Final message.
+  echo "The removal was successful."
+  exit 0
+}
+# List packages function.
+operation_list() {
+  if [ "$(ls "$datadir/manifest")" ]; then
+    for i in "$datadir"/manifest/*.manifest; do
+      . "$i" || mf_err
+      if [ "$installed_as_dependency" = "True" ]; then
+        the_list="$the_list $pkgname=$pkgver(automatic)"
+      else
+        the_list="$the_list $pkgname=$pkgver"
+      fi
+    done
+  fi
+  if [ -z "$the_list" ]; then
+    echo "You don't currently have any packages installed."
+  else
+    echo "Your installed packages:"
+    echo
+    echo "$the_list" | column
+    echo
+    echo "The total number of installed packages is $(wc -w <<< "$the_list")."
+  fi
+  exit 0
+}
+# Get information about a particular package function.
+operation_info() {
+  if [ -z "$args" ]; then
+    echo "Error: You must specify a package to get information about." >&2
+    echo >&2
+    echo "Usage: $invocation info <package-name>" >&2
+    exit 1
+  fi
+  # Only get information about one package.
+  pkg="$(echo "$args" | cut -d' ' -f1)"
+  # Check if the package is installed as part of the system.
+  if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+    echo "$pkg is installed as part of your system."
+    exit 0
+  elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
+    # Get information from installed manifest, if possible.
+    . "$datadir/manifest/$pkg.manifest" 2>/dev/null || mf_err
+    # Allow displaying of dependencies in a friendly way.
+    if [ -z "$deps" ]; then
+      fdep="None"
+    else
+      for i in $deps; do
+        fdep="$fdep, $i"
+      done
+      fdep="$(echo "$fdep" | sed 's/, //')"
+    fi
+    # Display the information.
+    echo "Package name:     $pkgname"
+    echo "Package version:  $pkgver"
+    echo "Description:      $description"
+    echo "Dependencies:     $fdep"
+    echo "CPU architecture: $arch"
+    echo "Homepage:         $homepage"
+    echo "Maintainer:       $maintainer"
+    echo "License:          $license"
+    echo
+    if [ "$installed_as_dependency" = "True" ]; then
+      echo "This package is installed as a dependency of another package."
+    else
+      echo "This package is installed."
+    fi
+  else
+    # Try to fetch the information from the remote repo.
+    curl --fail-with-body -Ls "$repo/$sys_arch/manifest/$pkg.manifest" \
+    -o "$datadir/cache/$pkg.manifest" 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; die "Error: Could not locate package $pkg.")
+    . "$datadir/cache/$pkg.manifest" 2>/dev/null || mf_err
+    # Allow displaying of dependencies in a friendly way.
+    if [ -z "$deps" ]; then
+      fdep="None"
+    else
+      for i in $deps; do
+        fdep="$fdep, $i"
+      done
+      fdep="$(echo "$fdep" | sed 's/, //')"
+    fi
+    # Display the information.
+    echo "Package name:     $pkgname"
+    echo "Package version:  $pkgver"
+    echo "Description:      $description"
+    echo "Dependencies:     $fdep"
+    echo "CPU architecture: $arch"
+    echo "Homepage:         $homepage"
+    echo "Maintainer:       $maintainer"
+    echo "License:          $license"
+  fi
+}
+# Check argument(s) passed and do the necessary operation.
+case "$1" in
+  install) operation_install ;;
+  update) operation_update ;;
+  remove) operation_remove ;;
+  list) operation_list ;;
+  info) operation_info ;;
+  help|-h|-help|--help) help; exit 0 ;;
+  version|-v|-V|-version|--version) help | head -n2; help | tail -n3; exit 0 ;;
+  *) help >&2; exit 1 ;;
+esac
