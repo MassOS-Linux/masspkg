@@ -17,7 +17,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Set version and copyright year.
-VER="1.0.0"
+VER="1.0.1"
 CP_YEAR="2021"
 # Exit on error.
 set -e
@@ -68,8 +68,10 @@ rm -rf "$datadir"/cache/*
 # Unset any potentially conflicting environment variables.
 unset friendly fdep not_in ok_packages pkg_deps the_list to_rm to_upd
 # Set arguments, ignoring the operation specifier.
+operation="$1"
 if [ ! -z "$2" ]; then
-  args="$(echo "$@" | cut -d' ' -f2- | xargs -n1 | sort -u | xargs)"
+  shift
+  args="$@"
 else
   unset args
 fi
@@ -97,7 +99,7 @@ operation_install() {
   fi
   # Check if packages are installed.
   for pkg in $args; do
-    if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+    if grep -Fqx -- "$pkg" "$builtins" 2>/dev/null; then
       echo "$pkg is already installed as part of your system."
     elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
       . "$datadir/manifest/$pkg.manifest" 2>/dev/null || mf_err
@@ -136,7 +138,7 @@ operation_install() {
     if [ ! -z "$deps" ]; then
       for dp in $deps; do
         # Check if dependency is installed as part of the system.
-        if ! grep -Fqx "$dp" "$builtins" 2>/dev/null; then
+        if ! grep -Fqx -- "$dp" "$builtins" 2>/dev/null; then
           if [ ! -e "$datadir/cache/$dp.manifest" ] && \
           [ ! -e "$datadir/manifest/$dp.manifest" ]; then
             curl --fail-with-body -Ls "$repo/$sys_arch/manifest/$dp.manifest" \
@@ -331,7 +333,7 @@ operation_remove() {
   fi
   # Check if packages are actually installed.
   for pkg in $args; do
-    if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+    if grep -Fqx -- "$pkg" "$builtins" 2>/dev/null; then
       die "Error: $pkg is part of your system. Cannot remove it."
     elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
       to_rm="$to_rm $pkg"
@@ -347,7 +349,7 @@ operation_remove() {
   for i in $installed; do
     . "$datadir/manifest/$i" 2>/dev/null || mf_err
     for j in $to_rm; do
-      if echo "$deps" | grep -Fqw "$j"; then
+      if echo "$deps" | grep -Fqw -- "$j"; then
         die "Error: $pkg is a dependency of $pkgname. Cannot remove it."
       fi
     done
@@ -423,7 +425,7 @@ operation_info() {
   # Only get information about one package.
   pkg="$(echo "$args" | cut -d' ' -f1)"
   # Check if the package is installed as part of the system.
-  if grep -Fqx "$pkg" "$builtins" 2>/dev/null; then
+  if grep -Fqx -- "$pkg" "$builtins" 2>/dev/null; then
     echo "$pkg is installed as part of your system."
     exit 0
   elif [ -e "$datadir/manifest/$pkg.manifest" ]; then
@@ -480,7 +482,7 @@ operation_info() {
   fi
 }
 # Check argument(s) passed and do the necessary operation.
-case "$1" in
+case "$operation" in
   install) operation_install ;;
   update) operation_update ;;
   remove) operation_remove ;;
