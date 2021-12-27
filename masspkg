@@ -17,7 +17,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Set version and copyright year.
-VER="1.0.1"
+VER="1.0.2"
 CP_YEAR="2021"
 # Exit on error.
 set -e
@@ -80,11 +80,11 @@ help() {
   echo "masspkg - The MassOS Package Manager."
   echo "Version $VER - Copyright (C) $CP_YEAR The Sonic Master."
   echo
-  echo "$invocation install    - Install one or more package(s)."
-  echo "$invocation update     - Scan for and install package update(s)."
-  echo "$invocation remove     - Remove one or more package(s)."
-  echo "$invocation list       - List installed package(s)."
-  echo "$invocation info       - Get information about a particular package."
+  echo "$invocation install - Install one or more package(s)."
+  echo "$invocation update  - Scan for and install package update(s)."
+  echo "$invocation remove  - Remove one or more package(s)."
+  echo "$invocation list    - List installed package(s)."
+  echo "$invocation info    - Get information about a particular package."
   echo
   echo "This is free software with NO WARRANTY. A copy of the license can be"
   echo "obtained from <https://www.gnu.org/licenses/gpl-3.0.html>."
@@ -207,13 +207,9 @@ operation_install() {
   for i in $pkg_deps $ok_packages; do
     . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
     echo "Installing $i=$pkgver..."
-    for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
-    do
-      install -D $(stat -c '-m %a -g %g -o %u' "$i-$pkgver-$arch/$j") \
-      "$i-$pkgver-$arch/$j" "$j" 2>/dev/null ||
-      (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
-      die "Error: Failed to install package $i.")
-    done
+    cp -a "$i-$pkgver-$arch"/* / 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
+    die "Error: Failed to install package $i.")
   done
   popd >/dev/null
   # Move manifest files to $datadir/manifest.
@@ -298,13 +294,9 @@ operation_update() {
   for i in $to_upd; do
     . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
     echo "Updating $i=$pkgver..."
-    for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
-    do
-      install -D $(stat -c '-m %a -g %g -o %u' "$i-$pkgver-$arch/$j") \
-      "$i-$pkgver-$arch/$j" "$j" 2>/dev/null ||
-      (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
-      die "Error: Failed to update package $i.")
-    done
+    cp -a "$pkgname-$pkgver-$arch"/* / 2>/dev/null ||
+    (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
+    die "Error: Failed to update package $i.")
   done
   popd >/dev/null
   # Clean up the old directories and move the new manifest files.
@@ -378,6 +370,14 @@ operation_remove() {
     for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
     do
       rm -f "$j" 2>/dev/null || die "Error: Failed to remove package $i."
+    done
+    # Remove empty directories.
+    for j in $(find "$i-$pkgver-$arch" -type d | sed "s/$i-$pkgver-$arch//");
+    do
+      if [ ! "$(ls -A "$j")" ]; then
+        rmdir "$j" 2>/dev/null ||
+        echo "Warning: Failed to remove directory $j." >&2
+      fi
     done
     # Remove the installed manifest file.
     rm -f "$datadir/manifest/$i.manifest"
