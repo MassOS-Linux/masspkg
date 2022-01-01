@@ -2,7 +2,7 @@
 # Comments (lines beginning with a hash) are ignored.
 
 # The package name. May only contain alphanumeric characters and dashes.
-pkgname="example-package"
+pkgname="example"
 
 # The package version. It is recommended to keep the version formatting used by
 # the upstream package, unless you have a specific reason to change it.
@@ -31,3 +31,30 @@ maintainer="John Smith <john@example.org>"
 # <https://spdx.org/licenses/> for more information. Use 'custom' if the
 # package is proprietary, or 'unknown' if the license is not known.
 license="GPL-3.0-or-later"
+
+# Additional tasks to perform before or after the installation, removal or
+# upgrade of the package. Omit any (or all) of these if they are not needed.
+pre_install() {
+  some_command
+  another_command
+}
+post_install() {
+  some_command
+  another_command
+}
+pre_remove() {
+  some_command
+  another_command
+}
+post_remove() {
+  some_command
+  another_command
+}
+pre_upgrade() {
+  some_command
+  another_command
+}
+post_upgrade() {
+  some_command
+  another_command
+}

@@ -17,8 +17,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Set version and copyright year.
-VER="1.0.2"
-CP_YEAR="2021"
+VER="1.1.0"
+CP_YEAR="2022"
 # Exit on error.
 set -e
 # Location of the configuration file.
@@ -40,6 +40,10 @@ die() {
 mf_err() {
   echo "Error: Manifest file is corrupted or has syntax errors." >&2
   exit 1
+}
+# Function to check if function.
+is_function() {
+  type -t "$1" | grep -q 'function'
 }
 # Check and source the configuration file.
 if [ ! -e "$cfg" ]; then
@@ -207,9 +211,17 @@ operation_install() {
   for i in $pkg_deps $ok_packages; do
     . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
     echo "Installing $i=$pkgver..."
+    # Run pre_install steps.
+    if $(is_function pre_install); then
+      pre_install || true
+    fi
     cp -a "$i-$pkgver-$arch"/* / 2>/dev/null ||
     (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
     die "Error: Failed to install package $i.")
+    # Run post_install steps.
+    if $(is_function post_install); then
+      post_install || true
+    fi
   done
   popd >/dev/null
   # Move manifest files to $datadir/manifest.
@@ -294,9 +306,18 @@ operation_update() {
   for i in $to_upd; do
     . "$datadir/cache/$i.manifest" 2>/dev/null || mf_err
     echo "Updating $i=$pkgver..."
+    # Run pre_upgrade steps.
+    if $(is_function pre_upgrade); then
+      pre_upgrade || true
+    fi
+    # Update the package.
     cp -a "$pkgname-$pkgver-$arch"/* / 2>/dev/null ||
     (rm -rf "$datadir"/cache/*; rm -rf "$datadir/extracted/$i-$pkgver-$arch";
     die "Error: Failed to update package $i.")
+    # Run post_upgrade steps.
+    if $(is_function post_upgrade); then
+      post_upgrade || true
+    fi
   done
   popd >/dev/null
   # Clean up the old directories and move the new manifest files.
@@ -367,6 +388,11 @@ operation_remove() {
   for i in $to_rm; do
     . "$datadir/manifest/$i.manifest" 2>/dev/null || mf_err
     echo "Removing $i=$pkgver..."
+    # Run pre_remove steps.
+    if $(is_function pre_remove); then
+      pre_remove || true
+    fi
+    # Remove the package.
     for j in $(find "$i-$pkgver-$arch" -type f,l | sed "s/$i-$pkgver-$arch//");
     do
       rm -f "$j" 2>/dev/null || die "Error: Failed to remove package $i."
@@ -379,6 +405,10 @@ operation_remove() {
         echo "Warning: Failed to remove directory $j." >&2
       fi
     done
+    # Run post_remove steps.
+    if $(is_function post_remove); then
+      post_remove || true
+    fi
     # Remove the installed manifest file.
     rm -f "$datadir/manifest/$i.manifest"
     # Finally, remove the extracted data directory.
