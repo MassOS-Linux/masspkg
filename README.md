@@ -1,13 +1,21 @@
 # masspkg
-The upcoming package manager of MassOS which is currently IN HEAVY DEVELOPMENT.
-# IN HEAVY DEVELOPMENT - NOT PRODUCTION READY
-**masspkg is in HEAVY development, it is not ready yet, please do not try to use it ~~on a production system~~ at all.**
+The upcoming package manager of MassOS which is currently in development.
+# Current status
+The current status, as of March 2022, is that `masspkg` is mostly finished and working, however has a few rough edges and a few missing features like pre and post installation steps.
+
+We don't recommend trying it out on a production system, however feel free to play around with it on a virtual machine.
+
+Contributions are highly encouraged. Although the basic design is already laid out, changes are not ruled out if they are necessary.
+
+For masspkg to work, we will also need (a) a team of maintainers and (b) hosting. If you are willing and able to join this team, or able to courteously provide hosting, please get in touch.
 # About masspkg.
-`masspkg` is the (upcoming) official package manager of the [MassOS](https://github.com/TheSonicMaster/MassOS) operating system.
+`masspkg` is the (upcoming) official package manager of the [MassOS](https://github.com/MassOS-Linux/MassOS) operating system.
 
 It is written in Bash from the ground-up, and has syntax similar (but not identical) to `apt`.
 
 It is designed to be flexible and uncomplicated to use for both users and package maintainers.
+
+In order to work harmoniously with MassOS, `masspkg` will not be used to manage software which is already part of the MassOS system, however it will be used to manage additional software one might want to install on top of a MassOS system.
 # Usage.
 ```
 masspkg install - Install one or more package(s).
@@ -21,7 +29,7 @@ masspkg info    - Get information about a particular package.
 
 First, retrieve the source code:
 ```
-git clone https://github.com/TheSonicMaster/masspkg.git
+git clone https://github.com/MassOS-Linux/masspkg.git
 cd masspkg
 ```
 Then install the program and configuration file (AS ROOT). This assumes you are using the default locations, `/usr/bin` and `/etc`.
@@ -41,12 +49,12 @@ For each package, only two files are really needed; the **manifest** file (read 
 # The manifest format.
 The information about each package is defined in its **manifest** file. A manifest file is titled **_package-name_.manifest**. Inside the manifest file are variables which define information about the package. An example manifest file (`hello.manifest`) may look like this:
 ```
-pkgname="example-package"
+pkgname="example"
 pkgver="1.0.0"
 description="Example program for demonstrating masspkg manifest syntax."
 deps="bash glibc"
 arch="x86_64"
-homepage="https://github.com/TheSonicMaster/MassOS"
+homepage="https://example.org"
 maintainer="John Smith <john@example.org>"
 license="GPL-3.0-or-later"
 ```
@@ -61,15 +69,15 @@ First, compile the package or otherwise obtain it as you normally would. When co
 
 It is good practice to install all binaries and libraries to `/usr/bin`, `/usr/sbin`, or `/usr/lib` respectively. This is because MassOS uses a unified filesystem structure, where `/bin`, `/sbin`, and `/lib` are symlinks to their `/usr` counterpart. Having `/bin`, `/sbin`, and `/lib` as real directories in your DESTDIR-installed folder will probably break masspkg.
 
-MassOS also prefers to avoid installation of libtool archives (`.la` files) and static libraries (`.a` files), unless it is absolutely necessary. This is because the majority of the MassOS system is dynamically linked. Unless you really need the libtool archives and/or static libraries of your package to be preserved, you can remove them with the following command (assuming your libraries are installed to `pkg-out/usr/lib` (the following commands will need to be modified as appropriate if these directories differ)):
+MassOS also prefers to avoid installation of libtool archives (`.la` files) and static libraries (`.a` files), unless it is absolutely necessary. This is because the majority of the MassOS system is dynamically linked. Unless you really need the libtool archives and/or static libraries of your package to be preserved (e.g. if building another package depends on them), you can remove them with the following command (assuming your libraries are installed to `pkg-out/usr/lib` (the following commands will need to be modified as appropriate if these directories differ)):
 ```
 find pkg-out/usr/lib -name \*.la -delete
 find pkg-out/usr/lib -name \*.a -delete
 ```
 It may also be benifical to strip your newly compiled and installed binaries/libraries. This removes unnecessary debugging symbols to save up disk space. Strip binaries and libraries like this (assuming your binaries are installed to `pkg-out/usr/bin` and your libraries are installed to `pkg-out/usr/lib` (the following commands will need to be modified as appropriate if these directories differ)):
 ```
-find pkg-out/usr/bin -type f -exec strip --strip-all {} ';'
-find pkg-out/usr/lib -type f -name \*.so\* -exec strip --strip-unneeded {} ';'
+find pkg-out/usr/{bin,libexec,sbin} -type f -exec strip --strip-all {} ';'
+find pkg-out/usr/lib -type f -name \*.so* -exec strip --strip-unneeded {} ';'
 ```
 Take care **NEVER** to use `--strip-all` on the shared libraries in `/usr/lib`. It will break their ability to be dynamically linked to, and therefore effectively render them useless. `--strip-all` can, however, be safely used on the binaries in `/usr/bin` without issues.
 
