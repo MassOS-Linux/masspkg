@@ -222,6 +222,7 @@ operation_install() {
     if $(is_function post_install); then
       post_install || true
     fi
+    unset pre_install post_install
   done
   popd >/dev/null
   # Move manifest files to $datadir/manifest.
@@ -318,6 +319,7 @@ operation_update() {
     if $(is_function post_upgrade); then
       post_upgrade || true
     fi
+    unset pre_upgrade post_upgrade
   done
   popd >/dev/null
   # Clean up the old directories and move the new manifest files.
@@ -409,6 +411,7 @@ operation_remove() {
     if $(is_function post_remove); then
       post_remove || true
     fi
+    unset pre_remove post_remove
     # Remove the installed manifest file.
     rm -f "$datadir/manifest/$i.manifest"
     # Finally, remove the extracted data directory.
