@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # masspkg - The MassOS Package Manager.
-# Copyright (C) 2021 The Sonic Master.
+# Copyright (C) 2022 MassOS Developers.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -82,7 +82,7 @@ fi
 # Usage/help function.
 help() {
   echo "masspkg - The MassOS Package Manager."
-  echo "Version $VER - Copyright (C) $CP_YEAR The Sonic Master."
+  echo "Version $VER - Copyright (C) $CP_YEAR MassOS Developers."
   echo
   echo "$invocation install - Install one or more package(s)."
   echo "$invocation update  - Scan for and install package update(s)."
@@ -90,8 +90,8 @@ help() {
   echo "$invocation list    - List installed package(s)."
   echo "$invocation info    - Get information about a particular package."
   echo
-  echo "This is free software with NO WARRANTY. A copy of the license can be"
-  echo "obtained from <https://www.gnu.org/licenses/gpl-3.0.html>."
+  echo "This is free software. For the license, see /usr/share/massos/LICENSE"
+  echo "on a MassOS system, or visit <https://www.gnu.org/licenses/gpl.html>."
 }
 # Install function.
 operation_install() {
